@@ -39,7 +39,6 @@ func init() {
 		log.Fatalf("Error opening config file: %s", err)
 	}
 	defer configFile.Close()
-	var config Config
 	decoder := yaml.NewDecoder(configFile)
 	err = decoder.Decode(&config)
 	if err != nil {
@@ -47,31 +46,40 @@ func init() {
 	}
 }
 
-func syncWithRepo(config Config) {
-	// Position git in the directory set in the config
-	err := exec.Command("git", "-C", config.Source).Run()
+func syncWithRepo() {
+	// Let's do the manual work here now, first fetch the latest changes
+	err := exec.Command("git", "-C", config.Source, "fetch", "--all").Run()
 	if err != nil {
-		log.Printf("Error changing directory: %s\nSync it manually this time? ¯\\_(ツ)_/¯", err)
+		log.Printf("Error fetching changes: %s\n", err)
 		return
 	}
-	// Let's do the manual work here now, first fetch the latest changes
-	exec.Command("git", "-C", config.Source, "fetch", "--all").Run()
 	// Then pull the latest changes
-	exec.Command("git", "-C", config.Source, "pull").Run()
+	err = exec.Command("git", "-C", config.Source, "pull").Run()
+		if err != nil {
+		log.Printf("Error pulling : %s\n", err)
+		return
+	}
 	// Cool, now we can copy the files to the destination
-	exec.Command("cp", "-r", config.Source+"/*", config.Destination).Run()
+	err = exec.Command("cp", "-r", config.Source+"/*", config.Destination).Run()
+	if err != nil {
+		log.Printf("Error copying files: %s\n", err)
+		return
+	}
 	// Now reload the webserver and we're all done unless something broke apart
-	exec.Command("systemctl", "reload", "apache2.service").Run()
+	err = exec.Command("systemctl", "reload", "apache2.service").Run()
+	if err != nil {
+
+		log.Printf("Error reloading apache2: %s\n", err)
+		return
+	}
 }
 
 func validateWebhook(body []byte, hookSignature string) bool {
 	// Simple validation logic
 	key := []byte(config.Secret)
-
 	signature := hmac.New(sha256.New, key)
 	signature.Write(body)
 	expectedSignature := hex.EncodeToString(signature.Sum(nil))
-
 	return hmac.Equal([]byte(hookSignature[7:]), []byte(expectedSignature))
 }
 
@@ -99,14 +107,12 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to parse JSON", http.StatusBadRequest)
 		return
 	}
-
-
-	log.Printf("Received webhook action: %s\n", payload.Action)
-
+	action := r.Header.Get("X-GitHub-Event")
+	log.Printf("Received webhook action: %s\n", action)
 	// Example: Execute Linux commands based on the webhook action
-	if payload.Action == "push" {
-		syncWithRepo(config)
-	} else if payload.Action == "ping" {
+	if action == "push" {
+		syncWithRepo()
+	} else if action == "ping" {
 		log.Printf("Ping event received")
 	}
 
@@ -115,6 +121,7 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+
 	http.HandleFunc("/webhook", webhookHandler)
 
 	port := "23454"
