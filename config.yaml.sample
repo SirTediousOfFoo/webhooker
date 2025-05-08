@@ -1,0 +1,3 @@
+destination: /my/cool/directory/
+source: /home/user/git/repository/
+secret: somethingSecretForTheWebhook
